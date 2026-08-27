@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hanoi Text-to-SQL Spatial Map</title>
+    <!-- Favicon (Biểu tượng trên tab trình duyệt) -->
+    <link rel="icon" type="image/png" href="/static/logo.png" />
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet.js CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <style>
+        /* Tối ưu thanh cuộn */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 font-sans h-screen flex overflow-hidden">
+
+    <!-- CỘT BÊN TRÁI: KHUNG TRÒ CHUYỆN (CHATS) - Có thể kéo dãn độ rộng -->
+    <div id="left-panel" class="w-[40%] min-w-[320px] max-w-[70%] flex flex-col border-r border-slate-200 bg-white h-full relative z-10 shadow-lg shrink-0">
+        <!-- Header -->
+        <div class="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-900 text-white">
+            <div class="flex items-center space-x-3">
+                <img src="/static/icon_chatbox.png" class="h-10 w-10 object-contain rounded-lg" alt="Chatbox Icon" />
+                <div>
+                    <h1 class="font-bold text-base leading-tight">Hanoi Spatial LLM</h1>
+                    <span class="text-xs text-indigo-300 flex items-center">
+                        <span class="h-2 w-2 rounded-full bg-emerald-400 inline-block mr-1.5 animate-pulse"></span>
+                        Qwen3.5 & PostGIS
+                    </span>
+                </div>
+            </div>
+            <button onclick="clearChat()" class="text-slate-400 hover:text-white transition-colors p-1.5 rounded hover:bg-slate-800" title="Xóa lịch sử chat">
+                <i class="fa-solid fa-trash-can"></i>
+            </button>
+        </div>
+
+        <!-- Khung lịch sử tin nhắn -->
+        <div id="chat-history" class="flex-1 overflow-y-auto p-6 space-y-6">
+            <!-- Tin nhắn chào mừng mặc định -->
+            <div class="flex items-start space-x-3">
+                <div class="bg-indigo-100 text-indigo-600 p-2 rounded-lg mt-1 shrink-0">
+                    <i class="fa-solid fa-robot"></i>
+                </div>
+                <div class="bg-slate-100 rounded-2xl px-4 py-3 text-sm text-slate-800 max-w-[85%] shadow-sm">
+                    <p class="font-semibold text-slate-900 mb-1">Xin chào!</p>
+                    <p>Tôi là trợ lý AI bản đồ Hà Nội. Bạn có thể hỏi tôi bất kỳ câu hỏi địa lý nào bằng tiếng Việt tự nhiên, tôi sẽ dịch sang SQL PostGIS để tìm kết quả và vẽ lên bản đồ bên phải cho bạn!</p>
+                    <div class="mt-3 pt-2 border-t border-slate-200 text-xs text-slate-500">
+                        <p class="font-medium text-slate-700 mb-1">Ví dụ gợi ý:</p>
+                        <ul class="list-disc pl-4 space-y-1">
+                            <li><a href="#" onclick="askExample(this)" class="text-indigo-600 hover:underline">Tìm 10 bệnh viện gần Hồ Tây nhất.</a></li>
+                            <li><a href="#" onclick="askExample(this)" class="text-indigo-600 hover:underline">Tìm các trường học cách Hồ Hoàn Kiếm dưới 1 km.</a></li>
+                            <li><a href="#" onclick="askExample(this)" class="text-indigo-600 hover:underline">Tìm 5 cây cầu lớn vượt qua Sông Hồng.</a></li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Khung Loading khi đang xử lý -->
+        <div id="loading-spinner" class="hidden absolute inset-x-0 bottom-24 flex justify-center z-20">
+            <div class="bg-slate-950/80 text-white rounded-full px-5 py-2.5 flex items-center space-x-2 text-xs shadow-xl backdrop-blur-sm">
+                <svg class="animate-spin h-4 w-4 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span>AI đang suy nghĩ và dịch sang SQL...</span>
+            </div>
+        </div>
+
+        <!-- Thanh Input gửi câu hỏi -->
+        <div class="p-4 border-t border-slate-100 bg-white">
+            <form id="chat-form" onsubmit="handleQuery(event)" class="relative flex items-center">
+                <input 
+                    type="text" 
+                    id="user-input" 
+                    class="w-full pl-4 pr-12 py-3.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:border-indigo-500 focus:bg-white transition-all placeholder:text-slate-400 shadow-inner"
+                    placeholder="Nhập câu hỏi bản đồ (ví dụ: Bệnh viện gần Hồ Tây)..."
+                    required
+                />
+                <button 
+                    type="submit" 
+                    class="absolute right-2 bg-indigo-600 hover:bg-indigo-700 text-white p-2.5 rounded-lg transition-colors flex items-center justify-center shadow-md hover:shadow-indigo-200"
+                >
+                    <i class="fa-solid fa-paper-plane text-xs"></i>
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- THANH KÉO RỘNG BẢNG CHAT (Resizer Handle) -->
+    <div id="dragbar" class="w-1 hover:w-1.5 bg-slate-200 hover:bg-indigo-500 cursor-col-resize h-full transition-all shrink-0 z-20"></div>
+
+    <!-- CỘT BÊN PHẢI: BẢN ĐỒ LEAFLET.JS - Tự động giãn theo phần còn lại -->
+    <div class="flex-1 h-full relative" id="map-container">
+        <div id="map" class="w-full h-full"></div>
+        
+        <!-- Legend / Panel thông tin nhỏ đè lên map (Có nút thu gọn) -->
+        <div id="legend-panel" class="absolute top-4 right-4 bg-white/90 backdrop-blur-sm px-4 py-3 rounded-lg shadow-lg z-[1000] border border-slate-200 text-[11px] text-slate-700 font-medium max-w-xs transition-all duration-300">
+            <div class="flex items-center justify-between border-b border-slate-200 pb-1 mb-1.5 text-xs text-slate-900 font-bold space-x-6">
+                <span>Chú giải bản đồ</span>
+                <button onclick="toggleLegend()" class="text-slate-400 hover:text-slate-700 focus:outline-none p-0.5 rounded hover:bg-slate-200 transition-colors" title="Thu gọn / Mở rộng">
+                    <i id="legend-toggle-icon" class="fa-solid fa-chevron-up text-[10px]"></i>
+                </button>
+            </div>
+            <div id="legend-content" class="space-y-1.5 transition-all duration-300">
+                <div class="flex items-center"><span class="w-3.5 h-3.5 rounded-full bg-red-500 border border-white inline-block mr-2 shadow-sm"></span>Điểm POI (Trường học, Bệnh viện...)</div>
+                <div class="flex items-center"><span class="w-4 h-1 bg-blue-600 inline-block mr-2 rounded"></span>Đường giao thông (Traffic)</div>
+                <div class="flex items-center"><span class="w-4 h-3 bg-cyan-400/50 border border-cyan-600 inline-block mr-2 rounded"></span>Mặt nước / Sông hồ (Water)</div>
+                <div class="flex items-center"><span class="w-4 h-3 bg-emerald-400/50 border border-emerald-600 inline-block mr-2 rounded"></span>Công viên / Đất đai (Landuse)</div>
+                <div class="flex items-center"><span class="w-4 h-3 bg-purple-500/20 border border-purple-600 border-dashed inline-block mr-2 rounded"></span>Đơn vị Hành chính (Ward)</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Leaflet.js JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script>
+        // 1. KHỞI TẠO BẢN ĐỒ LEAFLET
+        const hanoiCenter = [21.0285, 105.8542];
+        const map = L.map('map', {
+            zoomControl: false
+        }).setView(hanoiCenter, 12);
+
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+
+        let geojsonLayerGroup = L.layerGroup().addTo(map);
+
+        // 2. KÉO DÃN PHÂN CHIA HỒ SƠ CHAT & MAP (RESIZE SPLITTER)
+        const leftPanel = document.getElementById('left-panel');
+        const dragbar = document.getElementById('dragbar');
+        let isResizing = false;
+
+        dragbar.addEventListener('mousedown', function(e) {
+            isResizing = true;
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+        });
+
+        document.addEventListener('mousemove', function(e) {
+            if (!isResizing) return;
+            const minWidth = 320;
+            const maxWidth = window.innerWidth * 0.7; // Tối đa 70% màn hình
+            let newWidth = e.clientX;
+            
+            if (newWidth < minWidth) newWidth = minWidth;
+            if (newWidth > maxWidth) newWidth = maxWidth;
+            
+            leftPanel.style.width = newWidth + 'px';
+            
+            // Yêu cầu Leaflet tính toán lại kích thước bản đồ tức thời
+            map.invalidateSize();
+        });
+
+        document.addEventListener('mouseup', function(e) {
+            if (isResizing) {
+                isResizing = false;
+                document.body.style.cursor = '';
+                document.body.style.userSelect = '';
+                map.invalidateSize();
+            }
+        });
+
+        // 3. THU GỌN / MỞ RỘNG CHÚ GIẢI BẢN ĐỒ
+        function toggleLegend() {
+            const content = document.getElementById('legend-content');
+            const icon = document.getElementById('legend-toggle-icon');
+            
+            if (content.classList.contains('hidden')) {
+                content.classList.remove('hidden');
+                icon.className = 'fa-solid fa-chevron-up text-[10px]';
+            } else {
+                content.classList.add('hidden');
+                icon.className = 'fa-solid fa-chevron-down text-[10px]';
+            }
+        }
+
+        // 4. CÁC HÀM XỬ LÝ CHAT & GIAO DIỆN KHÁC
+        const chatHistory = document.getElementById('chat-history');
+        const userInput = document.getElementById('user-input');
+        const loadingSpinner = document.getElementById('loading-spinner');
+
+        function appendUserMessage(text) {
+            const msgHtml = `
+                <div class="flex items-start space-x-3 justify-end">
+                    <div class="bg-indigo-600 text-white rounded-2xl px-4 py-3 text-sm max-w-[85%] shadow-sm font-medium">
+                        ${text}
+                    </div>
+                </div>
+            `;
+            chatHistory.insertAdjacentHTML('beforeend', msgHtml);
+            scrollToBottom();
+        }
+
+        function appendBotMessage(answer, sql, columns, rows) {
+            const messageId = 'msg-' + Date.now();
+            
+            let tableHtml = '';
+            if (rows && rows.length > 0 && columns && columns.length > 0) {
+                // Lọc bỏ cột hình học geom_geojson để bảng thuộc tính sạch đẹp, không bị rối mắt
+                const displayCols = columns.filter(col => col !== 'geom_geojson');
+                
+                let tableRows = '';
+                const displayRows = rows.slice(0, 5);
+                displayRows.forEach(row => {
+                    tableRows += `<tr class="border-b border-slate-100 hover:bg-slate-50">`;
+                    displayCols.forEach(col => {
+                        let cellVal = row[col];
+                        if (cellVal === null || cellVal === undefined) cellVal = '';
+                        if (typeof cellVal === 'string' && cellVal.length > 30) cellVal = cellVal.substring(0, 27) + '...';
+                        tableRows += `<td class="px-3 py-2 text-slate-700">${cellVal}</td>`;
+                    });
+                    tableRows += `</tr>`;
+                });
+
+                let headerCols = displayCols.map(col => `<th class="px-3 py-1.5 bg-slate-100 text-slate-700 font-bold uppercase tracking-wider text-left">${col}</th>`).join('');
+
+                tableHtml = `
+                    <div class="mt-3 border border-slate-200 rounded-lg overflow-hidden">
+                        <div class="max-h-48 overflow-auto">
+                            <table class="w-full text-xs text-left border-collapse">
+                                <thead>
+                                    <tr class="border-b border-slate-200">${headerCols}</tr>
+                                </thead>
+                                <tbody>
+                                    ${tableRows}
+                                </tbody>
+                            </table>
+                        </div>
+                        ${rows.length > 5 ? `<div class="bg-slate-50 px-3 py-1 text-[10px] text-slate-500 border-t border-slate-200 text-center font-medium">Hiển thị 5 / ${rows.length} kết quả (tất cả đã được vẽ trên bản đồ)</div>` : ''}
+                    </div>
+                `;
+            }
+
+            let sqlHtml = '';
+            if (sql) {
+                sqlHtml = `
+                    <div class="mt-2.5">
+                        <button onclick="toggleSql('${messageId}')" class="text-indigo-600 hover:text-indigo-800 text-[11px] font-bold flex items-center space-x-1 focus:outline-none">
+                            <i class="fa-solid fa-code text-[10px]"></i>
+                            <span>Xem câu lệnh SQL PostGIS đã dịch</span>
+                        </button>
+                        <div id="sql-${messageId}" class="hidden mt-2 bg-slate-900 text-slate-200 p-3 rounded-lg text-[11px] font-mono whitespace-pre-wrap overflow-x-auto shadow-inner border border-slate-950">
+                            ${sql}
+                        </div>
+                    </div>
+                `;
+            }
+
+            const botHtml = `
+                <div class="flex items-start space-x-3">
+                    <div class="bg-slate-100 text-slate-600 p-2 rounded-lg mt-1 shrink-0">
+                        <i class="fa-solid fa-robot"></i>
+                    </div>
+                    <div class="bg-slate-50 border border-slate-100 rounded-2xl px-4 py-3 text-sm text-slate-800 max-w-[85%] shadow-sm">
+                        <p class="leading-relaxed whitespace-pre-wrap">${answer}</p>
+                        ${tableHtml}
+                        ${sqlHtml}
+                    </div>
+                </div>
+            `;
+            chatHistory.insertAdjacentHTML('beforeend', botHtml);
+            scrollToBottom();
+        }
+
+        function appendBotError(errorText, sql) {
+            const messageId = 'err-' + Date.now();
+            let sqlHtml = '';
+            if (sql) {
+                sqlHtml = `
+                    <div class="mt-2.5">
+                        <button onclick="toggleSql('${messageId}')" class="text-slate-600 hover:text-slate-800 text-[11px] font-bold flex items-center space-x-1 focus:outline-none">
+                            <i class="fa-solid fa-code"></i>
+                            <span>Xem câu lệnh SQL gây lỗi</span>
+                        </button>
+                        <div id="sql-${messageId}" class="hidden mt-2 bg-slate-900 text-red-300 p-3 rounded-lg text-[11px] font-mono overflow-x-auto">
+                            ${sql}
+                        </div>
+                    </div>
+                `;
+            }
+
+            const errorHtml = `
+                <div class="flex items-start space-x-3">
+                    <div class="bg-red-50 text-red-500 p-2 rounded-lg mt-1 shrink-0 border border-red-100">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                    </div>
+                    <div class="bg-red-50 border border-red-100 rounded-2xl px-4 py-3 text-sm text-red-800 max-w-[85%] shadow-sm">
+                        <p class="font-bold mb-1">Lỗi thực thi dữ liệu</p>
+                        <p class="text-xs leading-relaxed text-red-700">${errorText}</p>
+                        ${sqlHtml}
+                    </div>
+                </div>
+            `;
+            chatHistory.insertAdjacentHTML('beforeend', errorHtml);
+            scrollToBottom();
+        }
+
+        function toggleSql(id) {
+            const sqlDiv = document.getElementById('sql-' + id);
+            sqlDiv.classList.toggle('hidden');
+        }
+
+        function scrollToBottom() {
+            chatHistory.scrollTop = chatHistory.scrollHeight;
+        }
+
+        function clearChat() {
+            chatHistory.innerHTML = '';
+            geojsonLayerGroup.clearLayers();
+            map.setView(hanoiCenter, 12);
+            appendBotMessage("Đã dọn dẹp lịch sử trò chuyện và bản vẽ trên bản đồ. Tôi sẵn sàng cho câu hỏi mới!");
+        }
+
+        function askExample(linkElement) {
+            userInput.value = linkElement.innerText;
+            userInput.focus();
+        }
+
+        // 5. KẾT NỐI VÀ VẼ LÊN BẢN ĐỒ (GEOMETRY STYLING)
+        function styleFeature(feature) {
+            const type = (feature.properties.type || '').toLowerCase();
+            const subtype = (feature.properties.subtype || '').toLowerCase();
+            
+            if (feature.geometry.type === 'Polygon' || feature.geometry.type === 'MultiPolygon') {
+                if (feature.properties.area_m2 !== undefined || ['water', 'lake', 'river', 'reservoir'].includes(type)) {
+                    return {
+                        fillColor: '#22d3ee',
+                        fillOpacity: 0.55,
+                        color: '#0891b2',
+                        weight: 1.5
+                    };
+                }
+                if (['park', 'forest', 'residential', 'commercial'].includes(type) || feature.properties.leisure) {
+                    return {
+                        fillColor: '#34d399',
+                        fillOpacity: 0.45,
+                        color: '#059669',
+                        weight: 1
+                    };
+                }
+                return {
+                    fillColor: '#f43f5e',
+                    fillOpacity: 0.35,
+                    color: '#e11d48',
+                    weight: 0.8
+                };
+            }
+            
+            if (feature.geometry.type === 'LineString' || feature.geometry.type === 'MultiLineString') {
+                return {
+                    color: '#2563eb',
+                    weight: 3.5,
+                    opacity: 0.85
+                };
+            }
+            
+            return {};
+        }
+
+        function renderGeoJsonOnMap(geojson) {
+            geojsonLayerGroup.clearLayers();
+
+            if (!geojson || !geojson.features || geojson.features.length === 0) {
+                return;
+            }
+
+            const geojsonLayer = L.geoJSON(geojson, {
+                style: styleFeature,
+                pointToLayer: function(feature, latlng) {
+                    return L.circleMarker(latlng, {
+                        radius: 8,
+                        fillColor: '#ef4444',
+                        color: '#ffffff',
+                        weight: 1.5,
+                        opacity: 1,
+                        fillOpacity: 0.95
+                    });
+                },
+                onEachFeature: function(feature, layer) {
+                    let popupContent = `<div class="font-sans text-xs p-1"><h4 class="font-bold text-slate-900 border-b pb-1 mb-1.5 text-sm">${feature.properties.name || 'Không có tên'}</h4>`;
+                    
+                    for (const [key, val] of Object.entries(feature.properties)) {
+                        if (key !== 'name' && val !== null && val !== undefined) {
+                            popupContent += `<p class="my-0.5"><span class="font-semibold text-slate-500">${key}:</span> <span class="text-slate-800">${val}</span></p>`;
+                        }
+                    }
+                    popupContent += `</div>`;
+                    layer.bindPopup(popupContent);
+                }
+            });
+
+            geojsonLayerGroup.addLayer(geojsonLayer);
+
+            try {
+                const bounds = geojsonLayer.getBounds();
+                if (bounds.isValid()) {
+                    map.fitBounds(bounds, {
+                        padding: [50, 50],
+                        maxZoom: 17
+                    });
+                }
+            } catch (e) {
+                console.error("Lỗi khi fitBounds bản đồ:", e);
+            }
+        }
+
+        // 6. GỬI CÂU HỎI LÊN BACKEND API
+        async function handleQuery(event) {
+            event.preventDefault();
+            const question = userInput.value.trim();
+            if (!question) return;
+
+            appendUserMessage(question);
+            userInput.value = '';
+            
+            loadingSpinner.classList.remove('hidden');
+
+            try {
+                const response = await fetch('/api/ask', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ question: question })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server báo lỗi HTTP status ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    appendBotMessage(data.answer, data.sql, data.columns, data.rows);
+                    if (data.geojson && data.geojson.features.length > 0) {
+                        renderGeoJsonOnMap(data.geojson);
+                    }
+                } else {
+                    appendBotError(data.error || 'Lỗi không rõ nguồn gốc', data.sql);
+                }
+            } catch (error) {
+                appendBotError(`Không thể kết nối đến backend API. Vui lòng đảm bảo ứng dụng Python đang chạy. Chi tiết: ${error.message}`, null);
+            } finally {
+                loadingSpinner.classList.add('hidden');
+            }
+        }
+    </script>
+</body>
+</html>

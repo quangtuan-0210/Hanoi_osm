@@ -444,11 +444,60 @@
 
             geojsonLayerGroup.addLayer(geojsonLayer);
 
+            // Nối liền mạch từ Marker A vào đầu đường đi và từ cuối đường đi vào Marker B
+            if (markerA && markerB) {
+                let firstCoord = null;
+                let lastCoord = null;
+                
+                geojson.features.forEach(f => {
+                    if (f.geometry && (f.geometry.type === 'LineString' || f.geometry.type === 'MultiLineString')) {
+                        const coords = f.geometry.type === 'LineString' ? f.geometry.coordinates : f.geometry.coordinates[0];
+                        if (coords && coords.length > 0) {
+                            if (!firstCoord) firstCoord = [coords[0][1], coords[0][0]];
+                            lastCoord = [coords[coords.length - 1][1], coords[coords.length - 1][0]];
+                        }
+                    }
+                });
+
+                if (firstCoord && lastCoord) {
+                    const posA = markerA.getLatLng();
+                    const posB = markerB.getLatLng();
+                    
+                    const distFirstToA = posA.distanceTo(firstCoord);
+                    const distLastToA = posA.distanceTo(lastCoord);
+                    
+                    let connectStart = firstCoord;
+                    let connectEnd = lastCoord;
+                    if (distLastToA < distFirstToA) {
+                        connectStart = lastCoord;
+                        connectEnd = firstCoord;
+                    }
+                    
+                    // Vẽ đường nối nét đứt từ Marker A đến con đường
+                    L.polyline([posA, connectStart], {
+                        color: '#16a34a',
+                        weight: 3.5,
+                        dashArray: '5, 7',
+                        opacity: 0.9
+                    }).addTo(geojsonLayerGroup);
+                    
+                    // Vẽ đường nối nét đứt từ con đường đến Marker B
+                    L.polyline([connectEnd, posB], {
+                        color: '#dc2626',
+                        weight: 3.5,
+                        dashArray: '5, 7',
+                        opacity: 0.9
+                    }).addTo(geojsonLayerGroup);
+                }
+            }
+
             try {
                 const bounds = geojsonLayer.getBounds();
                 if (bounds.isValid()) {
+                    if (markerA) bounds.extend(markerA.getLatLng());
+                    if (markerB) bounds.extend(markerB.getLatLng());
                     map.fitBounds(bounds, {
-                        padding: [50, 50],
+                        padding: [60, 60],
                         maxZoom: 17
                     });
                 }

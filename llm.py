@@ -57,25 +57,57 @@ CRITICAL RULES FOR SQL GENERATION:
      e.g.:
      WITH start_location AS (SELECT ST_SetSRID(ST_MakePoint(105.8542, 21.0285), 4326) AS geom),
      end_location AS (SELECT ST_SetSRID(ST_MakePoint(105.7825, 21.0368), 4326) AS geom)
-   - In `start_nodes` and `end_nodes`, ensure the location geometry exists by adding `AND (SELECT geom FROM start_location LIMIT 1) IS NOT NULL` and `AND (SELECT geom FROM end_location LIMIT 1) IS NOT NULL` to prevent ordering by `NULL` if a place name is not found.
-   - To avoid listing dozens of raw fragmented road segments in the output table, ALWAYS aggregate/group the route edges by road name using `GROUP BY COALESCE(t.name, 'Đoạn đường không tên')`, preserve the traversal sequence with `ORDER BY MIN(r.seq)`, calculate total length per road using `ROUND(SUM(r.cost)::numeric, 2) AS length_m`, and merge geometries using `ST_AsGeoJSON(ST_LineMerge(ST_Union(t.geom))) AS geom_geojson`.
-   - Query format:
-     WITH start_location AS (SELECT geom FROM poi WHERE (name ILIKE '%A%' ...) UNION ALL SELECT geom FROM traffic WHERE (name ILIKE '%A%' ...) LIMIT 1),
-     end_location AS (SELECT geom FROM poi WHERE (name ILIKE '%B%' ...) UNION ALL SELECT geom FROM traffic WHERE (name ILIKE '%B%' ...) LIMIT 1),
-     start_nodes AS (SELECT DISTINCT node_id FROM (SELECT source::bigint AS node_id FROM traffic WHERE subtype NOT IN ('rail', 'subway', 'footway', 'pedestrian', 'path', 'service', 'track') AND name IS NOT NULL AND (SELECT geom FROM start_location LIMIT 1) IS NOT NULL ORDER BY geom <-> (SELECT geom FROM start_location LIMIT 1) LIMIT 15) AS sub_start),
-     end_nodes AS (SELECT DISTINCT node_id FROM (SELECT source::bigint AS node_id FROM traffic WHERE subtype NOT IN ('rail', 'subway', 'footway', 'pedestrian', 'path', 'service', 'track') AND name IS NOT NULL AND (SELECT geom FROM end_location LIMIT 1) IS NOT NULL ORDER BY geom <-> (SELECT geom FROM end_location LIMIT 1) LIMIT 15) AS sub_end),
-     route AS (SELECT seq, path_seq, start_vid, end_vid, node, edge, cost, agg_cost FROM pgr_dijkstra('SELECT id, source, target, cost, reverse_cost FROM traffic', ARRAY(SELECT node_id FROM start_nodes), ARRAY(SELECT node_id FROM end_nodes), directed := false)),
-     best_pair AS (SELECT start_vid, end_vid FROM route WHERE edge = -1 ORDER BY agg_cost ASC LIMIT 1)
-     SELECT 
-         ROW_NUMBER() OVER (ORDER BY MIN(r.seq)) AS stt,
-         COALESCE(t.name, 'Đoạn đường không tên') AS road_name,
-         ROUND(SUM(r.cost)::numeric, 2) AS length_m,
-         ST_AsGeoJSON(ST_LineMerge(ST_Union(t.geom))) AS geom_geojson
-     FROM route r 
-     JOIN best_pair b ON r.start_vid = b.start_vid AND r.end_vid = b.end_vid 
-     JOIN traffic t ON r.edge = t.id 
-     GROUP BY COALESCE(t.name, 'Đoạn đường không tên')
-     ORDER BY MIN(r.seq);
+    - CRITICAL ACCURACY RULE FOR ROUTING:
+      1. When selecting road nodes for start and end, NEVER blindly pick `t.source` because a street segment can be hundreds of meters long. Always pick the true closest endpoint of the street (`source` vs `target`) using:
+         `CASE WHEN ST_Distance(ST_StartPoint(t.geom)::geography, loc.geom::geography) < ST_Distance(ST_EndPoint(t.geom)::geography, loc.geom::geography) THEN t.source ELSE t.target END::bigint AS node_id`
+      2. Record `dist_to_start` and `dist_to_end` using `LEAST(ST_Distance(ST_StartPoint(t.geom)::geography, loc.geom::geography), ST_Distance(ST_EndPoint(t.geom)::geography, loc.geom::geography))`.
+      3. In `best_pair`, NEVER order by `r.agg_cost ASC` alone (as that prematurely truncates the route by picking a candidate far from the destination). ALWAYS order by total end-to-end distance: `ORDER BY (sn.dist_to_start + r.agg_cost + en.dist_to_end) ASC LIMIT 1`.
+    - Query format:
+      WITH start_location AS (SELECT geom FROM poi WHERE (name ILIKE '%A%' ...) UNION ALL SELECT geom FROM traffic WHERE (name ILIKE '%A%' ...) LIMIT 1),
+      end_location AS (SELECT geom FROM poi WHERE (name ILIKE '%B%' ...) UNION ALL SELECT geom FROM traffic WHERE (name ILIKE '%B%' ...) LIMIT 1),
+      start_nodes AS (
+          SELECT node_id, MIN(dist_to_start) AS dist_to_start FROM (
+              SELECT 
+                  CASE WHEN ST_Distance(ST_StartPoint(t.geom)::geography, s.geom::geography) < ST_Distance(ST_EndPoint(t.geom)::geography, s.geom::geography) THEN t.source ELSE t.target END::bigint AS node_id,
+                  LEAST(ST_Distance(ST_StartPoint(t.geom)::geography, s.geom::geography), ST_Distance(ST_EndPoint(t.geom)::geography, s.geom::geography)) AS dist_to_start
+              FROM traffic t, start_location s
+              WHERE t.subtype NOT IN ('rail', 'subway', 'footway', 'pedestrian', 'path', 'service', 'track') AND t.name IS NOT NULL AND s.geom IS NOT NULL
+              ORDER BY t.geom <-> s.geom LIMIT 10
+          ) AS sub_start GROUP BY node_id
+      ),
+      end_nodes AS (
+          SELECT node_id, MIN(dist_to_end) AS dist_to_end FROM (
+              SELECT 
+                  CASE WHEN ST_Distance(ST_StartPoint(t.geom)::geography, e.geom::geography) < ST_Distance(ST_EndPoint(t.geom)::geography, e.geom::geography) THEN t.source ELSE t.target END::bigint AS node_id,
+                  LEAST(ST_Distance(ST_StartPoint(t.geom)::geography, e.geom::geography), ST_Distance(ST_EndPoint(t.geom)::geography, e.geom::geography)) AS dist_to_end
+              FROM traffic t, end_location e
+              WHERE t.subtype NOT IN ('rail', 'subway', 'footway', 'pedestrian', 'path', 'service', 'track') AND t.name IS NOT NULL AND e.geom IS NOT NULL
+              ORDER BY t.geom <-> e.geom LIMIT 10
+          ) AS sub_end GROUP BY node_id
+      ),
+      route AS (
+          SELECT seq, path_seq, start_vid, end_vid, node, edge, cost, agg_cost 
+          FROM pgr_dijkstra('SELECT id, source, target, cost, reverse_cost FROM traffic', ARRAY(SELECT node_id FROM start_nodes), ARRAY(SELECT node_id FROM end_nodes), directed := false)
+      ),
+      best_pair AS (
+          SELECT r.start_vid, r.end_vid 
+          FROM route r
+          JOIN start_nodes sn ON r.start_vid = sn.node_id
+          JOIN end_nodes en ON r.end_vid = en.node_id
+          WHERE r.edge = -1 
+          ORDER BY (sn.dist_to_start + r.agg_cost + en.dist_to_end) ASC 
+          LIMIT 1
+      )
+      SELECT 
+          ROW_NUMBER() OVER (ORDER BY MIN(r.seq)) AS stt,
+          COALESCE(t.name, 'Đoạn đường không tên') AS road_name,
+          ROUND(SUM(r.cost)::numeric, 2) AS length_m,
+          ST_AsGeoJSON(ST_LineMerge(ST_Union(t.geom))) AS geom_geojson
+      FROM route r 
+      JOIN best_pair b ON r.start_vid = b.start_vid AND r.end_vid = b.end_vid 
+      JOIN traffic t ON r.edge = t.id 
+      GROUP BY COALESCE(t.name, 'Đoạn đường không tên')
+      ORDER BY MIN(r.seq);
 10. FLEXIBLE NAME & ABBREVIATION MATCHING RULE:
    - Entity names in OpenStreetMap (especially universities, academies, institutes, hospitals, and landmarks) often include middle words, qualifiers, or abbreviations. For example:
      + "Học viện Bưu chính" is stored as "Học viện công nghệ bưu chính viễn thông" or "PTIT" (or "CIE-PTIT").

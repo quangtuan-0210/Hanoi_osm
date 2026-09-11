@@ -12,20 +12,24 @@ from llm import translate_text_to_sql, generate_natural_answer
 # Khởi tạo ứng dụng FastAPI
 app = FastAPI(title="Hanoi Text-to-SQL Spatial Map")
 
+from typing import List, Optional
+
 # Khai báo cấu trúc dữ liệu gửi lên từ Client
 class QuestionRequest(BaseModel):
     question: str
+    history: Optional[List[dict]] = []
 
 # Khai báo API Endpoint nhận câu hỏi và xử lý
 @app.post("/api/ask")
 async def ask_question(request: QuestionRequest):
     user_question = request.question.strip()
+    history = request.history or []
     if not user_question:
         raise HTTPException(status_code=400, detail="Câu hỏi không được để trống")
     
     try:
-        # Bước 1: Dịch câu hỏi tự nhiên sang SQL thông qua LLM Qwen3.5
-        sql_query = translate_text_to_sql(user_question)
+        # Bước 1: Dịch câu hỏi tự nhiên sang SQL thông qua LLM Qwen3.5 (có ngữ cảnh lịch sử)
+        sql_query = translate_text_to_sql(user_question, history=history)
         
         # Bước 2: Thực thi SQL dưới PostGIS
         db_result = execute_query(sql_query)
@@ -42,9 +46,10 @@ async def ask_question(request: QuestionRequest):
                 "error": db_result["error"]
             }
             
-        # Bước 3: Gửi kết quả truy vấn (tăng giới hạn từ 30 lên 150 dòng để tránh cắt cụt lộ trình dẫn đường) sang LLM để sinh câu trả lời tự nhiên
+        # Bước 3: Gửi kết quả truy vấn sang LLM để sinh câu trả lời tự nhiên (có ngữ cảnh lịch sử)
         sample_results = db_result["rows"][:150]
-        natural_answer = generate_natural_answer(user_question, sql_query, sample_results)
+        natural_answer = generate_natural_answer(user_question, sql_query, sample_results, history=history)
+
         
         return {
             "success": True,
@@ -83,5 +88,4 @@ async def read_index():
     return FileResponse(index_path)
 
 if __name__ == "__main__":
-
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)

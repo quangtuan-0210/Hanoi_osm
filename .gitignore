@@ -1,0 +1,38 @@
+﻿# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment variables and secrets
+.env
+.env.local
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Microsoft Office temporary lock files
+~$*
+*.tmp
+
+# Logs
+*.log
+
+# OS generated files
+Thumbs.db
+[Dd]esktop.ini
+.DS_Store
+
+

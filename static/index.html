@@ -120,7 +120,7 @@
                 </button>
             </div>
             <div id="legend-content" class="space-y-1.5 transition-all duration-300">
-                <div class="flex items-center"><span class="w-3.5 h-3.5 rounded-full bg-red-500 border border-white inline-block mr-2 shadow-sm"></span>Điểm POI (Trường học, Bệnh viện...)</div>
+                <div class="flex items-center"><span class="w-3.5 h-3.5 rounded-full bg-violet-600 border border-white inline-block mr-2 shadow-sm"></span>Điểm POI (Trường học, Bệnh viện...)</div>
                 <div class="flex items-center"><span class="w-4 h-1 bg-blue-600 inline-block mr-2 rounded"></span>Đường giao thông (Traffic)</div>
                 <div class="flex items-center"><span class="w-4 h-3 bg-cyan-400/50 border border-cyan-600 inline-block mr-2 rounded"></span>Mặt nước / Sông hồ (Water)</div>
                 <div class="flex items-center"><span class="w-4 h-3 bg-emerald-400/50 border border-emerald-600 inline-block mr-2 rounded"></span>Công viên / Đất đai (Landuse)</div>
@@ -140,10 +140,9 @@
 
         L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-            subdomains: 'abcd',
-            maxZoom: 20
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19
         }).addTo(map);
 
         let geojsonLayerGroup = L.layerGroup().addTo(map);
@@ -201,6 +200,7 @@
         const chatHistory = document.getElementById('chat-history');
         const userInput = document.getElementById('user-input');
         const loadingSpinner = document.getElementById('loading-spinner');
+        let conversationHistory = []; // Lưu trữ ngữ cảnh hội thoại đa lượt (Multi-turn Context)
 
         function appendUserMessage(text) {
             const msgHtml = `
@@ -328,6 +328,7 @@
         }
 
         function clearChat() {
+            conversationHistory = [];
             chatHistory.innerHTML = '';
             geojsonLayerGroup.clearLayers();
             map.setView(hanoiCenter, 12);
@@ -392,9 +393,9 @@
                 pointToLayer: function(feature, latlng) {
                     return L.circleMarker(latlng, {
                         radius: 8,
-                        fillColor: '#ef4444',
+                        fillColor: '#7c3aed',
                         color: '#ffffff',
-                        weight: 1.5,
+                        weight: 2,
                         opacity: 1,
                         fillOpacity: 0.95
                     });
@@ -427,7 +428,7 @@
             }
         }
 
-        // 6. GỬI CÂU HỎI LÊN BACKEND API
+        // 6. GỬI CÂU HỎI LÊN BACKEND API (HỖ TRỢ NGỮ CẢNH ĐA LƯỢT)
         async function handleQuery(event) {
             event.preventDefault();
             const question = userInput.value.trim();
@@ -444,7 +445,10 @@
                     headers: {
                         'Content-Type': 'application/json'
                     },
-                    body: JSON.stringify({ question: question })
+                    body: JSON.stringify({ 
+                        question: question,
+                        history: conversationHistory
+                    })
                 });
 
                 if (!response.ok) {
@@ -455,6 +459,19 @@
                 
                 if (data.success) {
                     appendBotMessage(data.answer, data.sql, data.columns, data.rows);
+                    
+                    // Lưu lượt hội thoại này vào lịch sử ngữ cảnh
+                    conversationHistory.push({
+                        question: question,
+                        sql: data.sql,
+                        answer: data.answer
+                    });
+                    
+                    // Giữ tối đa 6 lượt hội thoại gần nhất để tránh phình to bộ nhớ trình duyệt
+                    if (conversationHistory.length > 6) {
+                        conversationHistory.shift();
+                    }
+
                     if (data.geojson && data.geojson.features.length > 0) {
                         renderGeoJsonOnMap(data.geojson);
                     }

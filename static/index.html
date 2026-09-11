@@ -473,20 +473,18 @@
                         connectEnd = firstCoord;
                     }
                     
-                    // Vẽ đường nối nét đứt từ Marker A đến con đường
+                    // Nối liền mạch từ Marker A đến con đường bằng đúng nét xanh đặc (Solid Blue)
                     L.polyline([posA, connectStart], {
-                        color: '#16a34a',
+                        color: '#2563eb',
                         weight: 3.5,
-                        dashArray: '5, 7',
-                        opacity: 0.9
+                        opacity: 0.85
                     }).addTo(geojsonLayerGroup);
                     
-                    // Vẽ đường nối nét đứt từ con đường đến Marker B
+                    // Nối liền mạch từ con đường đến Marker B bằng đúng nét xanh đặc (Solid Blue)
                     L.polyline([connectEnd, posB], {
-                        color: '#dc2626',
+                        color: '#2563eb',
                         weight: 3.5,
-                        dashArray: '5, 7',
-                        opacity: 0.9
+                        opacity: 0.85
                     }).addTo(geojsonLayerGroup);
                 }
             }

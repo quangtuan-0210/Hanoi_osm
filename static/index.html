@@ -111,6 +111,34 @@
     <div class="flex-1 h-full relative" id="map-container">
         <div id="map" class="w-full h-full"></div>
         
+        <!-- Công cụ Tìm đường trực tiếp A -> B bằng Click Marker -->
+        <div id="routing-panel" class="absolute top-4 left-4 bg-white/95 backdrop-blur-sm p-2 rounded-xl shadow-xl z-[1000] border border-slate-200 text-xs font-medium transition-all max-w-[280px]">
+            <div class="flex items-center space-x-1.5">
+                <button id="btn-toggle-route-mode" onclick="toggleRouteMode()" class="flex items-center space-x-1.5 bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg font-semibold shadow transition-all">
+                    <i class="fa-solid fa-diamond-turn-right text-xs"></i>
+                    <span id="route-mode-text">Chỉ đường A ➔ B</span>
+                </button>
+                <button id="btn-clear-route" onclick="clearRouteMarkers()" class="hidden text-slate-500 hover:text-red-600 bg-slate-100 hover:bg-red-50 p-2 rounded-lg border border-slate-200 transition-colors" title="Xóa điểm đã chọn">
+                    <i class="fa-solid fa-rotate-left"></i>
+                </button>
+            </div>
+            
+            <div id="route-guidance" class="hidden mt-2 pt-2 border-t border-slate-100 text-[11px] text-slate-600">
+                <div id="route-status-msg" class="font-semibold text-indigo-700 mb-1.5 flex items-center leading-tight">
+                    <i class="fa-solid fa-location-dot text-emerald-600 mr-1.5 shrink-0"></i>
+                    <span>Click bản đồ để đặt Điểm A</span>
+                </div>
+                <div class="space-y-1 bg-slate-50 p-2 rounded-lg border border-slate-100 text-[10px] text-slate-500 font-mono">
+                    <div id="coord-a" class="truncate"><span class="font-bold text-emerald-600">A:</span> Chưa chọn</div>
+                    <div id="coord-b" class="truncate"><span class="font-bold text-rose-600">B:</span> Chưa chọn</div>
+                </div>
+                <button id="btn-find-route" onclick="submitRouteAB()" class="hidden w-full mt-2 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg font-bold shadow transition-all text-center flex items-center justify-center space-x-1.5">
+                    <i class="fa-solid fa-route"></i>
+                    <span>Tìm đường ngay</span>
+                </button>
+            </div>
+        </div>
+
         <!-- Legend / Panel thông tin nhỏ đè lên map (Có nút thu gọn) -->
         <div id="legend-panel" class="absolute top-4 right-4 bg-white/90 backdrop-blur-sm px-4 py-3 rounded-lg shadow-lg z-[1000] border border-slate-200 text-[11px] text-slate-700 font-medium max-w-xs transition-all duration-300">
             <div class="flex items-center justify-between border-b border-slate-200 pb-1 mb-1.5 text-xs text-slate-900 font-bold space-x-6">
@@ -331,6 +359,7 @@
             conversationHistory = [];
             chatHistory.innerHTML = '';
             geojsonLayerGroup.clearLayers();
+            if (typeof clearRouteMarkers === 'function') clearRouteMarkers();
             map.setView(hanoiCenter, 12);
             appendBotMessage("Đã dọn dẹp lịch sử trò chuyện và bản vẽ trên bản đồ. Tôi sẵn sàng cho câu hỏi mới!");
         }
@@ -483,6 +512,136 @@
             } finally {
                 loadingSpinner.classList.add('hidden');
             }
+        }
+
+        // 7. TÍNH NĂNG CHẤM 2 ĐIỂM A - B VÀ TÌM ĐƯỜNG TRỰC TIẾP TRÊN BẢN ĐỒ
+        let isRoutingMode = false;
+        let markerA = null;
+        let markerB = null;
+        let routeMarkersGroup = L.layerGroup().addTo(map);
+
+        const iconA = L.divIcon({
+            className: 'custom-route-marker-a',
+            html: `<div style="background-color: #16a34a; color: white; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; border: 3px solid white; box-shadow: 0 4px 10px rgba(0,0,0,0.35); font-size: 13px; cursor: move;">A</div>`,
+            iconSize: [30, 30],
+            iconAnchor: [15, 15]
+        });
+
+        const iconB = L.divIcon({
+            className: 'custom-route-marker-b',
+            html: `<div style="background-color: #dc2626; color: white; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; border: 3px solid white; box-shadow: 0 4px 10px rgba(0,0,0,0.35); font-size: 13px; cursor: move;">B</div>`,
+            iconSize: [30, 30],
+            iconAnchor: [15, 15]
+        });
+
+        function toggleRouteMode() {
+            isRoutingMode = !isRoutingMode;
+            const btn = document.getElementById('btn-toggle-route-mode');
+            const guidance = document.getElementById('route-guidance');
+            const clearBtn = document.getElementById('btn-clear-route');
+            
+            if (isRoutingMode) {
+                btn.classList.remove('bg-indigo-600', 'hover:bg-indigo-700');
+                btn.classList.add('bg-rose-600', 'hover:bg-rose-700');
+                document.getElementById('route-mode-text').innerText = 'Đang chọn điểm...';
+                guidance.classList.remove('hidden');
+                clearBtn.classList.remove('hidden');
+                map.getContainer().style.cursor = 'crosshair';
+                updateRouteStatusUI();
+            } else {
+                btn.classList.remove('bg-rose-600', 'hover:bg-rose-700');
+                btn.classList.add('bg-indigo-600', 'hover:bg-indigo-700');
+                document.getElementById('route-mode-text').innerText = 'Chỉ đường A ➔ B';
+                map.getContainer().style.cursor = '';
+                if (!markerA && !markerB) {
+                    guidance.classList.add('hidden');
+                    clearBtn.classList.add('hidden');
+                }
+            }
+        }
+
+        map.on('click', function(e) {
+            if (!isRoutingMode) return;
+            const lat = e.latlng.lat;
+            const lng = e.latlng.lng;
+
+            if (!markerA) {
+                markerA = L.marker([lat, lng], { icon: iconA, draggable: true }).addTo(routeMarkersGroup);
+                markerA.bindPopup("<div class='text-xs font-semibold'>📍 <b>Điểm A (Xuất phát)</b><br><span class='text-slate-500 font-normal'>Kéo thả để tinh chỉnh vị trí</span></div>").openPopup();
+                markerA.on('dragend', updateRouteStatusUI);
+            } else if (!markerB) {
+                markerB = L.marker([lat, lng], { icon: iconB, draggable: true }).addTo(routeMarkersGroup);
+                markerB.bindPopup("<div class='text-xs font-semibold'>🏁 <b>Điểm B (Đích đến)</b><br><span class='text-slate-500 font-normal'>Kéo thả để tinh chỉnh vị trí</span></div>").openPopup();
+                markerB.on('dragend', updateRouteStatusUI);
+            } else {
+                // Nếu đã cắm đủ 2 điểm, click tiếp sẽ cập nhật điểm B
+                markerB.setLatLng([lat, lng]);
+            }
+            updateRouteStatusUI();
+        });
+
+        function updateRouteStatusUI() {
+            const statusMsg = document.getElementById('route-status-msg');
+            const coordA = document.getElementById('coord-a');
+            const coordB = document.getElementById('coord-b');
+            const btnFind = document.getElementById('btn-find-route');
+
+            if (markerA) {
+                const posA = markerA.getLatLng();
+                coordA.innerHTML = `<span class="font-bold text-emerald-600">A:</span> ${posA.lat.toFixed(5)}, ${posA.lng.toFixed(5)}`;
+            } else {
+                coordA.innerHTML = `<span class="font-bold text-emerald-600">A:</span> Chưa chọn`;
+            }
+
+            if (markerB) {
+                const posB = markerB.getLatLng();
+                coordB.innerHTML = `<span class="font-bold text-rose-600">B:</span> ${posB.lat.toFixed(5)}, ${posB.lng.toFixed(5)}`;
+            } else {
+                coordB.innerHTML = `<span class="font-bold text-rose-600">B:</span> Chưa chọn`;
+            }
+
+            if (!markerA) {
+                statusMsg.innerHTML = `<i class="fa-solid fa-location-dot text-emerald-600 mr-1.5 shrink-0 animate-bounce"></i> <span>Click bản đồ để đặt Điểm A (Xuất phát)</span>`;
+                btnFind.classList.add('hidden');
+            } else if (!markerB) {
+                statusMsg.innerHTML = `<i class="fa-solid fa-flag-checkered text-rose-600 mr-1.5 shrink-0 animate-bounce"></i> <span>Click bản đồ để đặt Điểm B (Đích đến)</span>`;
+                btnFind.classList.add('hidden');
+            } else {
+                statusMsg.innerHTML = `<i class="fa-solid fa-circle-check text-emerald-600 mr-1.5 shrink-0"></i> <span>Đã chọn đủ 2 điểm. Bấm Tìm đường!</span>`;
+                btnFind.classList.remove('hidden');
+            }
+        }
+
+        function clearRouteMarkers() {
+            routeMarkersGroup.clearLayers();
+            markerA = null;
+            markerB = null;
+            updateRouteStatusUI();
+            if (isRoutingMode) {
+                toggleRouteMode();
+            } else {
+                document.getElementById('route-guidance').classList.add('hidden');
+                document.getElementById('btn-clear-route').classList.add('hidden');
+            }
+        }
+
+        function submitRouteAB() {
+            if (!markerA || !markerB) return;
+            const posA = markerA.getLatLng();
+            const posB = markerB.getLatLng();
+            
+            const questionText = `Tìm đường đi từ tọa độ ${posA.lat.toFixed(6)}, ${posA.lng.toFixed(6)} đến tọa độ ${posB.lat.toFixed(6)}, ${posB.lng.toFixed(6)}`;
+            
+            userInput.value = questionText;
+            
+            // Đóng chế độ chọn điểm trên bản đồ sau khi đã gửi
+            if (isRoutingMode) {
+                toggleRouteMode();
+            }
+            
+            // Gửi câu hỏi lên hệ thống
+            const form = document.getElementById('chat-form');
+            form.dispatchEvent(new Event('submit', { cancelable: true }));
         }
     </script>
 </body>

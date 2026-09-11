@@ -51,6 +51,12 @@ CRITICAL RULES FOR SQL GENERATION:
 9. ROUTING RULE: If the query asks to find a route, path, or directions between two places or coordinates (e.g., from place A to place B), ALWAYS use the `pgr_dijkstra` function with `directed := false` (undirected is preferred for stability).
    - Find the closest road node `source` in 'traffic' for both start and end locations using coordinate-based sorting (`geom <-> ... LIMIT 1`), ignoring pedestrian/rail/service/track types and requiring the road to have a name (`AND name IS NOT NULL`) to ensure it snaps to a major public street in the main connected component.
    - To make start and end locations robust enough to support both POIs and street/road names, always define `start_location` and `end_location` using a `UNION ALL` between 'poi' and 'traffic' tables with a single `LIMIT 1` at the end.
+   - COORDINATE-BASED ROUTING: If the query provides numeric GPS coordinates for start and/or end locations (e.g. 'tọa độ 21.0285, 105.8542' or 'tọa độ A (lat1, lng1) đến tọa độ B (lat2, lng2)'):
+     Define the location directly using `ST_SetSRID(ST_MakePoint(lng, lat), 4326)`:
+     IMPORTANT: In `ST_MakePoint(longitude, latitude)`, longitude (Kinh độ, ~105.x in Hanoi) is FIRST and latitude (Vĩ độ, ~21.x in Hanoi) is SECOND!
+     e.g.:
+     WITH start_location AS (SELECT ST_SetSRID(ST_MakePoint(105.8542, 21.0285), 4326) AS geom),
+     end_location AS (SELECT ST_SetSRID(ST_MakePoint(105.7825, 21.0368), 4326) AS geom)
    - In `start_nodes` and `end_nodes`, ensure the location geometry exists by adding `AND (SELECT geom FROM start_location LIMIT 1) IS NOT NULL` and `AND (SELECT geom FROM end_location LIMIT 1) IS NOT NULL` to prevent ordering by `NULL` if a place name is not found.
    - To avoid listing dozens of raw fragmented road segments in the output table, ALWAYS aggregate/group the route edges by road name using `GROUP BY COALESCE(t.name, 'Đoạn đường không tên')`, preserve the traversal sequence with `ORDER BY MIN(r.seq)`, calculate total length per road using `ROUND(SUM(r.cost)::numeric, 2) AS length_m`, and merge geometries using `ST_AsGeoJSON(ST_LineMerge(ST_Union(t.geom))) AS geom_geojson`.
    - Query format:
